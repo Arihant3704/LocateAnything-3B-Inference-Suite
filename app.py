@@ -24,6 +24,40 @@ import spaces
 _FONT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "LXGWWenKai-Bold.ttf")
 
 
+def _get_first_env(*names):
+    for name in names:
+        value = os.environ.get(name)
+        if value and value.strip():
+            return value.strip()
+    return None
+
+
+def _configure_hf_auth():
+    model_token = _get_first_env(
+        "MODEL_HF_TOKEN",
+        "LOG_HF_TOKEN",
+        "HF_TOKEN",
+        "HUGGINGFACE_HUB_TOKEN",
+        "HUGGINGFACEHUB_API_TOKEN",
+    )
+    log_token = _get_first_env(
+        "LOG_HF_TOKEN",
+        "MODEL_HF_TOKEN",
+        "HF_TOKEN",
+        "HUGGINGFACE_HUB_TOKEN",
+        "HUGGINGFACEHUB_API_TOKEN",
+    )
+    shared_token = model_token or log_token
+    if shared_token:
+        # Some downstream hub calls still rely on standard env var names.
+        for name in ("HF_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HUGGINGFACEHUB_API_TOKEN"):
+            os.environ[name] = shared_token
+    return model_token, log_token
+
+
+MODEL_HF_TOKEN, LOG_HF_TOKEN = _configure_hf_auth()
+
+
 def _load_font(size=20):
     """加载中文字体（LXGW WenKai），需提前放置到 assets/ 目录"""
     if os.path.exists(_FONT_PATH):
@@ -199,11 +233,23 @@ class EagleWorker:
         self.device = device
         self.dtype = torch.bfloat16
         self.generation_mode = generation_mode
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+        self.hf_token = MODEL_HF_TOKEN
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_path,
+            trust_remote_code=True,
+            token=self.hf_token,
+        )
+        self.processor = AutoProcessor.from_pretrained(
+            model_path,
+            trust_remote_code=True,
+            token=self.hf_token,
+        )
         self.model = AutoModel.from_pretrained(
-            model_path, torch_dtype=self.dtype,
-            _attn_implementation="sdpa", trust_remote_code=True,
+            model_path,
+            torch_dtype=self.dtype,
+            _attn_implementation="sdpa",
+            trust_remote_code=True,
+            token=self.hf_token,
         ).to(device).eval()
         print("Model Loaded Successfully!")
 
@@ -420,20 +466,23 @@ except Exception as e:
 # 用户数据收集（HuggingFace Public Dataset）
 # ============================================================
 LOG_DATASET_REPO = os.environ.get("LOG_DATASET_REPO", "woshichaoren123/log")
-LOG_HF_TOKEN = os.environ.get("LOG_HF_TOKEN")
 _LOG_DIR = Path(tempfile.mkdtemp(prefix="hf_log_"))
 _log_scheduler = None
 
 if LOG_DATASET_REPO and LOG_HF_TOKEN:
-    _log_scheduler = CommitScheduler(
-        repo_id=LOG_DATASET_REPO,
-        repo_type="dataset",
-        folder_path=str(_LOG_DIR),
-        path_in_repo="data",
-        every=5,
-        token=LOG_HF_TOKEN,
-    )
-    print(f"[LOG] Dataset logging enabled → {LOG_DATASET_REPO}")
+    try:
+        _log_scheduler = CommitScheduler(
+            repo_id=LOG_DATASET_REPO,
+            repo_type="dataset",
+            folder_path=str(_LOG_DIR),
+            path_in_repo="data",
+            every=5,
+            token=LOG_HF_TOKEN,
+        )
+        print(f"[LOG] Dataset logging enabled → {LOG_DATASET_REPO}")
+    except Exception as e:
+        _log_scheduler = None
+        print(f"[LOG] Dataset logging disabled: {e}")
 else:
     print("[LOG] Dataset logging disabled (LOG_HF_TOKEN not set)")
 

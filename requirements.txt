@@ -1,0 +1,10 @@
+opencv-python==4.11.0.86
+opencv-python-headless==4.11.0.86
+transformers==4.51.0
+torch==2.5.0
+numpy==1.25.0
+Pillow==11.1.0
+peft
+torchvision
+decord==0.6.0
+lmdb==1.7.5

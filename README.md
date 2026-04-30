@@ -1,5 +1,5 @@
 ---
-title: Test
+title: LocateAnything
 emoji: 💬
 colorFrom: yellow
 colorTo: purple

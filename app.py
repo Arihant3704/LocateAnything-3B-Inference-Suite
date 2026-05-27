@@ -464,9 +464,22 @@ except Exception as e:
 
 # ============================================================
 # 用户数据收集（HuggingFace Public Dataset）
+#
+# 策略：one-record-per-file，配合按天目录 + 容器级 SESSION_ID。
+# 这样可以解决两个问题：
+#   1. 容器被回收时，本地 ephemeral 目录被清空。原来所有 session 都
+#      写同一个 logs_<date>.jsonl，新容器起来后会用空文件把 dataset 里
+#      旧的同名文件覆盖掉，造成数据丢失。
+#   2. 每次 commit 都要重传整份 LFS（appended 文件 hash 变了），浪费带宽。
+#
+# 现在每条记录写成独立的 JSONL 文件：
+#   data/<date>/<SESSION_ID>__<entry_id>.jsonl
+# CommitScheduler 只会“新增”文件，永远不会覆盖其它 session 的数据；
+# 单文件上传后即被封存，不会重复上传。
 # ============================================================
 LOG_DATASET_REPO = os.environ.get("LOG_DATASET_REPO", "woshichaoren123/log")
 _LOG_DIR = Path(tempfile.mkdtemp(prefix="hf_log_"))
+_SESSION_ID = uuid.uuid4().hex[:8]
 _log_scheduler = None
 
 if LOG_DATASET_REPO and LOG_HF_TOKEN:
@@ -476,10 +489,12 @@ if LOG_DATASET_REPO and LOG_HF_TOKEN:
             repo_type="dataset",
             folder_path=str(_LOG_DIR),
             path_in_repo="data",
-            every=5,
+            every=3,
             token=LOG_HF_TOKEN,
+            squash_history=False,
         )
-        print(f"[LOG] Dataset logging enabled → {LOG_DATASET_REPO}")
+        print(f"[LOG] Dataset logging enabled → {LOG_DATASET_REPO} "
+              f"(session={_SESSION_ID}, dir={_LOG_DIR})")
     except Exception as e:
         _log_scheduler = None
         print(f"[LOG] Dataset logging disabled: {e}")
@@ -494,12 +509,24 @@ def _pil_to_b64(pil_img):
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+def _atomic_write_text(path: Path, text: str):
+    """原子写入：先写临时文件再 rename，避免 CommitScheduler 读到半截文件。"""
+    tmp_path = path.with_name(path.name + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp_path, path)
+
+
 def _log_to_dataset(
     input_type, category, model_mode, raw_prompt,
     output_text="", input_image=None, output_image=None,
     extra=None,
 ):
-    """将用户 query、输入图片（base64）、推理结果写入按天分片的 JSONL。"""
+    """每条记录写到独立的 JSONL 文件，按日期分目录、文件名包含 session_id。
+
+    最终落盘路径（也是 dataset 里的路径）：
+        data/<YYYY-MM-DD>/<session_id>__<entry_id>.jsonl
+    """
     if _log_scheduler is None:
         return
     try:
@@ -517,6 +544,7 @@ def _log_to_dataset(
 
         record = {
             "id": entry_id,
+            "session_id": _SESSION_ID,
             "timestamp": ts,
             "input_type": input_type,
             "category": category,
@@ -529,10 +557,13 @@ def _log_to_dataset(
         if extra:
             record.update(extra)
 
-        log_file = _LOG_DIR / f"logs_{date_str}.jsonl"
+        day_dir = _LOG_DIR / date_str
+        day_dir.mkdir(parents=True, exist_ok=True)
+        log_file = day_dir / f"{_SESSION_ID}__{entry_id}.jsonl"
+
+        payload = json.dumps(record, ensure_ascii=False) + "\n"
         with _log_scheduler.lock:
-            with open(log_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            _atomic_write_text(log_file, payload)
     except Exception as e:
         print(f"[LOG] Failed to log to dataset: {e}")
 

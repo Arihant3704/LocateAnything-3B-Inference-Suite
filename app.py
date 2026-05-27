@@ -1120,18 +1120,27 @@ def create_demo():
         theme=gr.themes.Soft(primary_hue=nv_green, secondary_hue=nv_green),
         title="LocateAnything",
     ) as demo:
-        gr.Markdown("# 🚀 LocateAnything")
-        gr.Markdown(
-            "> **Locate any object in images or videos with natural language.**  \n"
-            "> Upload an image/video on the left, choose a task type, enter what you want to find, "
-            "then click **Run Inference**. Results with bounding boxes will appear on the right.\n"
-            ">\n"
-            "> **Quick Start:** "
-            "① Select *Image* or *Video* → "
-            "② Pick a *Task Type* (Detection / Grounding / OCR / GUI / Pointing) → "
-            "③ Type your *Categories* (comma-separated) → "
-            "④ Click **🧠 Run Inference**"
-        )
+        with gr.Row():
+            with gr.Column(scale=2):
+                gr.Markdown("# 🚀 LocateAnything")
+                gr.Markdown(
+                    "> **Locate any object in images or videos with natural language.**  \n"
+                    "> Upload an image/video on the left, choose a task type, enter what you want to find, "
+                    "then click **Run Inference**. Results with bounding boxes will appear on the right.\n"
+                    ">\n"
+                    "> **Quick Start:** "
+                    "① Select *Image* or *Video* → "
+                    "② Pick a *Task Type* (Detection / Grounding / OCR / GUI / Pointing) → "
+                    "③ Type your *Categories* (comma-separated) → "
+                    "④ Click **🧠 Run Inference**"
+                )
+            with gr.Column(scale=1):
+                gr.Markdown(
+                    "> ⚠️ **Note:** `magi-attention` cannot be installed in this Hugging Face Space, "
+                    "so inputs larger than 1K are resized to 1K in this demo.\n"
+                    ">\n"
+                    "> For full-resolution inference, please download the weights and run the model locally."
+                )
 
         with gr.Row():
             # ===== COL 1: Settings =====

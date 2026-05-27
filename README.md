@@ -11,8 +11,12 @@ pinned: false
 hf_oauth: true
 hf_oauth_scopes:
 - inference-api
-arxiv:
-- 2605.27365
+tags:
+- arxiv:2605.27365
 ---
 
-An example chatbot using [Gradio](https://gradio.app), [`huggingface_hub`](https://huggingface.co/docs/huggingface_hub/v0.22.2/en/index), and the [Hugging Face Inference API](https://huggingface.co/docs/api-inference/index).
+# LocateAnything
+
+Official demo for **LocateAnything**: locate any object in images or videos with natural language.
+
+📄 Paper: [arxiv.org/abs/2605.27365](https://arxiv.org/abs/2605.27365)

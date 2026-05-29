@@ -97,6 +97,32 @@ Below is the interface running inference on target query categories, showcasing 
 
 ---
 
+## ⚡ Hardware & Model Size Details
+
+### 📂 Model Download Size
+* **Total Download Size on Disk**: **7.8 GB** (original uncompressed `bfloat16` weights from Hugging Face).
+* **Network Bandwidth vs. First-Run Download Time**:
+  * **10 Mbps**: ~1 hour and 45 minutes
+  * **50 Mbps**: ~21 minutes
+  * **100 Mbps**: ~10.5 minutes
+  * **500 Mbps**: ~2.1 minutes
+  * **1 Gbps**: ~1 minute
+
+### 💾 VRAM & GPU Requirements
+
+During start-up, the model is loaded from your local disk and **quantized on-the-fly to 4-bit (NF4)** before entering VRAM:
+* **Model weight footprint in VRAM**: Compressed from 7.8 GB down to just **2.7 GB**.
+* **PyTorch CUDA library & context overhead**: ~1.2 GB.
+* **Total runtime VRAM footprint**: **~3.9 GB**.
+
+| Mode | Minimum GPU / VRAM | Recommended GPU |
+| :--- | :--- | :--- |
+| **4-Bit NF4 Mode (Default)** | **6 GB VRAM** (e.g., GTX 1060 6GB, RTX 3050, RTX A2000) | **8 GB VRAM** (e.g., RTX 3060, RTX 4060) |
+| **Standard 16-Bit Mode** | **12 GB VRAM** (e.g., RTX 3060 12GB) | **16 GB+ VRAM** (e.g., RTX 4080, RTX A4000) |
+| **Mock Mode** | **No GPU Required** (Runs on CPU/RAM instantly) | Any standard CPU |
+
+---
+
 ## 🚀 Setup & Installation
 
 ### 1. Clone the Repository

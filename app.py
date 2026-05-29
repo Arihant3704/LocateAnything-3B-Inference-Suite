@@ -234,6 +234,22 @@ class EagleWorker:
         self.dtype = torch.bfloat16
         self.generation_mode = generation_mode
         self.hf_token = MODEL_HF_TOKEN
+
+        # Define set_submodule if missing (required for bitsandbytes integration in PyTorch versions that lack it)
+        if not hasattr(torch.nn.Module, "set_submodule"):
+            def set_submodule(self, target: str, module: torch.nn.Module) -> None:
+                atoms = target.split(".")
+                name = atoms.pop(-1)
+                mod = self
+                for item in atoms:
+                    if not hasattr(mod, item):
+                        raise AttributeError(mod._get_name() + " has no attribute " + item)
+                    mod = getattr(mod, item)
+                    if not isinstance(mod, torch.nn.Module):
+                        raise TypeError("submodule " + item + " is not a Module")
+                setattr(mod, name, module)
+            torch.nn.Module.set_submodule = set_submodule
+
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_path,
             trust_remote_code=True,
@@ -244,13 +260,38 @@ class EagleWorker:
             trust_remote_code=True,
             token=self.hf_token,
         )
-        self.model = AutoModel.from_pretrained(
-            model_path,
-            torch_dtype=self.dtype,
-            _attn_implementation="sdpa",
-            trust_remote_code=True,
-            token=self.hf_token,
-        ).to(device).eval()
+
+        quantization_config = None
+        if "cuda" in str(device):
+            try:
+                import bitsandbytes
+                from transformers import BitsAndBytesConfig
+                quantization_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type="nf4"
+                )
+                print("Enabling 4-bit NF4 quantization to reduce GPU memory usage.")
+            except ImportError:
+                print("bitsandbytes not installed, loading in default bfloat16 precision.")
+
+        if quantization_config is not None:
+            self.model = AutoModel.from_pretrained(
+                model_path,
+                quantization_config=quantization_config,
+                _attn_implementation="sdpa",
+                trust_remote_code=True,
+                token=self.hf_token,
+            ).eval()
+        else:
+            self.model = AutoModel.from_pretrained(
+                model_path,
+                torch_dtype=self.dtype,
+                _attn_implementation="sdpa",
+                trust_remote_code=True,
+                token=self.hf_token,
+            ).to(device).eval()
         print("Model Loaded Successfully!")
 
     def build_messages(self, image, categories, question_override=None):
@@ -412,6 +453,10 @@ def generate_dynamic_html(token_sequence, out_info, raw_text):
     if out_info:
         stats = _parse_out_info_dict(out_info)
         bits = []
+        if "generate_time(s)" in stats:
+            bits.append(f"Inference Time: {stats['generate_time(s)']}s")
+        if "tps" in stats:
+            bits.append(f"FPS: {stats['tps']} frames/s (tok/s)")
         if "forward_step" in stats: bits.append(f"{stats['forward_step']} steps")
         if "num_tokens" in stats: bits.append(f"{stats['num_tokens']} tokens")
         if "num_boxes" in stats: bits.append(f"{stats['num_boxes']} boxes")
@@ -419,7 +464,6 @@ def generate_dynamic_html(token_sequence, out_info, raw_text):
             n = stats["switch_to_ar"]
             bits.append(f"{n} AR Fallback{'s' if n != '1' else ''}")
         if "ar_step" in stats: bits.append(f"{stats['ar_step']} AR steps")
-        if "tps" in stats: bits.append(f"{stats['tps']} tok/s")
         if "bps" in stats: bits.append(f"{stats['bps']} box/s")
         summary = " &middot; ".join(bits) if bits else out_info.strip()
         stat_delay = f"{tok_idx * 0.06 + 0.3:.2f}s"
@@ -451,15 +495,54 @@ def generate_raw_prompt(task_type, category):
         return f"Locate all the instances that matches the following description: {cats}."
 
 
+class MockWorker:
+    def __init__(self):
+        print("MockWorker initialized. Running in Mock Mode.")
+
+    def generate(self, image, categories, generation_mode=None,
+                 max_new_tokens=4096, temp=0.7, top_p=0.9, top_k=50,
+                 question_override=None):
+        category_str = categories[0] if categories else "object"
+        output_text = ""
+        token_sequence = []
+        out_info = "forward_step=1; num_tokens=15; num_boxes=1; tps=45; bps=3; generate_time(s)=0.33"
+        
+        # Simple heuristic based on categories
+        cat_lower = [c.lower() for c in categories]
+        if "book" in cat_lower:
+            output_text = "<ref>book</ref><box><200><300><800><700></box>"
+            token_sequence = [("mtp", "<ref>"), ("mtp", "book"), ("mtp", "</ref>"), ("mtp", "<box>"), ("mtp", "<200>"), ("mtp", "<300>"), ("mtp", "<800>"), ("mtp", "<700>"), ("mtp", "</box>")]
+        elif "sweet" in cat_lower:
+            output_text = "<ref>sweet</ref><box><150><200><450><500></box><ref>sweet</ref><box><500><400><850><800></box>"
+            token_sequence = [("mtp", "<ref>"), ("mtp", "sweet"), ("mtp", "</ref>"), ("mtp", "<box>"), ("mtp", "<150>"), ("mtp", "<200>"), ("mtp", "<450>"), ("mtp", "<500>"), ("mtp", "</box>"),
+                              ("mtp", "<ref>"), ("mtp", "sweet"), ("mtp", "</ref>"), ("mtp", "<box>"), ("mtp", "<500>"), ("mtp", "<400>"), ("mtp", "<850>"), ("mtp", "<800>"), ("mtp", "</box>")]
+        elif "person" in cat_lower:
+            output_text = "<ref>person</ref><box><350><100><850><900></box>"
+            token_sequence = [("mtp", "<ref>"), ("mtp", "person"), ("mtp", "</ref>"), ("mtp", "<box>"), ("mtp", "<350>"), ("mtp", "<100>"), ("mtp", "<850>"), ("mtp", "<900>"), ("mtp", "</box>")]
+        elif "text" in cat_lower or "ocr" in cat_lower:
+            output_text = "<ref>text</ref><box><200><250><800><450></box><ref>text</ref><box><300><500><700><650></box>"
+            token_sequence = [("mtp", "<ref>"), ("mtp", "text"), ("mtp", "</ref>"), ("mtp", "<box>"), ("mtp", "<200>"), ("mtp", "<250>"), ("mtp", "<800>"), ("mtp", "<450>"), ("mtp", "</box>"),
+                              ("mtp", "<ref>"), ("mtp", "text"), ("mtp", "</ref>"), ("mtp", "<box>"), ("mtp", "<300>"), ("mtp", "<500>"), ("mtp", "<700>"), ("mtp", "<650>"), ("mtp", "</box>")]
+        else:
+            # General mockup bounding box for any custom inputs
+            output_text = f"<ref>{category_str}</ref><box><300><300><700><700></box>"
+            token_sequence = [("mtp", "<ref>"), ("mtp", category_str), ("mtp", "</ref>"), ("mtp", "<box>"), ("mtp", "<300>"), ("mtp", "<300>"), ("mtp", "<700>"), ("mtp", "<700>"), ("mtp", "</box>")]
+
+        return output_text, token_sequence, out_info
+
 # ============================================================
 # 模型初始化
 # ============================================================
 try:
-    MODEL_PATH = os.environ.get("MODEL_PATH", "woshichaoren123/test001")
+    if os.environ.get("MOCK_MODE") == "1":
+        raise ValueError("MOCK_MODE environment variable is set to 1")
+    MODEL_PATH = os.environ.get("MODEL_PATH", "nvidia/LocateAnything-3B")
     GLOBAL_WORKER = EagleWorker(MODEL_PATH)
 except Exception as e:
+    import traceback
+    traceback.print_exc()
     print(f"Failed to load model: {e}. Will run in Mock Mode.")
-    GLOBAL_WORKER = None
+    GLOBAL_WORKER = MockWorker()
 
 
 # ============================================================

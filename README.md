@@ -127,8 +127,8 @@ During start-up, the model is loaded from your local disk and **quantized on-the
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/<your-username>/localizeanything.git
-cd localizeanything
+git clone https://github.com/Arihant3704/LocateAnything-3B-Inference-Suite.git
+cd LocateAnything-3B-Inference-Suite
 ```
 
 ### 2. Install Dependencies
